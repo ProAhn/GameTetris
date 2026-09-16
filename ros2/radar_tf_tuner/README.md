@@ -4,8 +4,13 @@ RViz에서 레이더 포인트(`ti_radar`)와 라이다 포인트(`os_sensor`)�
 두 프레임 사이의 TF를 실시간으로 조정하는 ROS 2 노드입니다.
 
 `static_transform_publisher`는 값을 바꿀 때마다 재실행해야 하지만, 이 노드는
-x, y, z, roll, pitch, yaw를 ROS 파라미터로 받아 20 Hz로 TF를 내보내므로
+x, y, z, roll, pitch, yaw를 ROS 파라미터로 받아 **정적 TF**(`/tf_static`)로 내보내므로
 `rqt_reconfigure` 슬라이더로 움직이면서 RViz에서 바로 결과를 볼 수 있습니다.
+파라미터가 바뀔 때마다 정적 TF를 다시 보내면 tf2 버퍼의 기존 값이 덮어써집니다.
+
+정적 TF를 쓰는 이유: `static_transform_publisher`와 똑같이 "모든 시간에 유효한"
+변환으로 취급되기 때문입니다. 동적 TF(`/tf`)로 보내면 레이더 메시지의 타임스탬프가
+0이거나 이 PC의 시계와 다를 때 "extrapolation" 에러로 RViz가 변환에 실패합니다.
 
 ## 배경: RViz에서 "Could not transform from [ti_radar] to [os_sensor]"
 
@@ -37,6 +42,10 @@ ros2 run tf2_ros tf2_echo os_sensor ti_radar          # 두 프레임 사이 변
    python3 radar_tf_tuner.py
    ```
 
+   노드는 로그에 `static_transform_publisher` 명령을 출력하지만 **그 명령을 실행하지는
+   않습니다.** 노드 자신이 `/tf_static`으로 변환을 내보내고 있고, 로그는 나중에 launch
+   파일에 옮겨 적기 위한 참고용입니다.
+
    프레임 이름이 다르면 파라미터로 넘깁니다.
 
    ```bash
@@ -67,6 +76,29 @@ ros2 run tf2_ros tf2_echo os_sensor ti_radar          # 두 프레임 사이 변
    ```bash
    ros2 param dump /radar_tf_tuner > radar_tf.yaml
    ```
+
+## 문제 해결
+
+**노드를 띄웠는데 RViz의 RadarPoints가 여전히 Error일 때**
+
+1. 변환이 실제로 나가는지 확인합니다. 아래에 `os_sensor` → `ti_radar` 항목이 보여야 합니다.
+
+   ```bash
+   ros2 topic echo /tf_static --qos-durability transient_local --qos-reliability reliable
+   ros2 run tf2_ros tf2_echo os_sensor ti_radar
+   ```
+
+2. 안 보이면 노드와 RViz가 서로를 못 보는 것입니다. `ros2 node list`에 `/radar_tf_tuner`가
+   있는지, 두 터미널의 `ROS_DOMAIN_ID`가 같은지, WSL2라면 네트워크 모드가 mirrored인지 확인합니다.
+
+3. 보이는데도 Error이면 프레임 이름 불일치입니다. 레이더 메시지의 실제 `header.frame_id`와
+   RViz Fixed Frame을 확인하고, 다르면 `-p child_frame:=...`, `-p parent_frame:=...`으로 맞춥니다.
+
+   ```bash
+   ros2 topic echo <레이더 토픽> --field header.frame_id
+   ```
+
+4. RViz의 RadarPoints 디스플레이를 껐다 켜거나, 왼쪽 패널의 Reset을 눌러 TF 버퍼를 비웁니다.
 
 ## 매칭 팁
 
