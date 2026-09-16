@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Interactive TF tuner for aligning a radar frame to a lidar frame in RViz.
 
-Publishes the parent_frame -> child_frame transform at 20 Hz from six ROS 2
-parameters (x, y, z, roll, pitch, yaw). Adjust them live with rqt_reconfigure
-sliders or `ros2 param set`, and copy the equivalent static_transform_publisher
-command from the log once the point clouds line up.
+Publishes the parent_frame -> child_frame transform as a *static* transform
+(/tf_static, latched) from six ROS 2 parameters (x, y, z, roll, pitch, yaw).
+Using a static transform matches the behaviour of
+`ros2 run tf2_ros static_transform_publisher`: tf2 treats it as valid for all
+time, so it works even when the radar messages carry a timestamp of 0 or a
+clock that differs from this machine. Every parameter change re-sends the
+static transform, which overwrites the previous value in every tf2 buffer.
+
+Adjust the parameters live with rqt_reconfigure sliders or `ros2 param set`,
+and copy the equivalent static_transform_publisher command from the log once
+the point clouds line up.
 """
 import math
 
@@ -12,9 +19,10 @@ import rclpy
 from geometry_msgs.msg import TransformStamped
 from rcl_interfaces.msg import FloatingPointRange, ParameterDescriptor, SetParametersResult
 from rclpy.node import Node
-from tf2_ros import TransformBroadcaster
+from tf2_ros import StaticTransformBroadcaster
 
 POSE_KEYS = ('x', 'y', 'z', 'roll', 'pitch', 'yaw')
+FRAME_KEYS = ('parent_frame', 'child_frame')
 
 
 def quat_from_euler(roll, pitch, yaw):
@@ -45,23 +53,27 @@ class RadarTfTuner(Node):
                 floating_point_range=[FloatingPointRange(from_value=lo, to_value=hi, step=0.001)])
             self.declare_parameter(name, 0.0, desc)
 
-        self.br = TransformBroadcaster(self)
+        self.br = StaticTransformBroadcaster(self)
         self.add_on_set_parameters_callback(self.on_params)
-        self.create_timer(0.05, self.publish)  # 20 Hz
-        self.log_command({})
+        # Re-send once per second so a late-started RViz or a restarted tf2
+        # buffer always picks the transform up.
+        self.create_timer(1.0, lambda: self.publish({}))
+        self.publish({})
 
-    def get(self, name):
-        return self.get_parameter(name).value
+    def current(self, overrides):
+        """Current parameter values with `overrides` (not yet stored) applied."""
+        return {k: overrides.get(k, self.get_parameter(k).value) for k in POSE_KEYS + FRAME_KEYS}
 
-    def publish(self):
+    def publish(self, overrides):
+        v = self.current(overrides)
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = self.get('parent_frame')
-        t.child_frame_id = self.get('child_frame')
-        t.transform.translation.x = self.get('x')
-        t.transform.translation.y = self.get('y')
-        t.transform.translation.z = self.get('z')
-        qx, qy, qz, qw = quat_from_euler(self.get('roll'), self.get('pitch'), self.get('yaw'))
+        t.header.frame_id = v['parent_frame']
+        t.child_frame_id = v['child_frame']
+        t.transform.translation.x = v['x']
+        t.transform.translation.y = v['y']
+        t.transform.translation.z = v['z']
+        qx, qy, qz, qw = quat_from_euler(v['roll'], v['pitch'], v['yaw'])
         t.transform.rotation.x = qx
         t.transform.rotation.y = qy
         t.transform.rotation.z = qz
@@ -69,24 +81,26 @@ class RadarTfTuner(Node):
         self.br.sendTransform(t)
 
     def log_command(self, overrides):
-        cur = {k: overrides.get(k, self.get(k)) for k in POSE_KEYS}
-        parent = overrides.get('parent_frame', self.get('parent_frame'))
-        child = overrides.get('child_frame', self.get('child_frame'))
+        v = self.current(overrides)
         self.get_logger().info(
             'ros2 run tf2_ros static_transform_publisher '
-            f"--x {cur['x']:.3f} --y {cur['y']:.3f} --z {cur['z']:.3f} "
-            f"--roll {cur['roll']:.3f} --pitch {cur['pitch']:.3f} --yaw {cur['yaw']:.3f} "
-            f'--frame-id {parent} --child-frame-id {child}')
+            f"--x {v['x']:.3f} --y {v['y']:.3f} --z {v['z']:.3f} "
+            f"--roll {v['roll']:.3f} --pitch {v['pitch']:.3f} --yaw {v['yaw']:.3f} "
+            f"--frame-id {v['parent_frame']} --child-frame-id {v['child_frame']}")
 
     def on_params(self, params):
-        # Called before the new values are stored, so pass them in explicitly.
-        self.log_command({p.name: p.value for p in params})
+        # Called before the new values are stored, so pass them in explicitly
+        # and push the updated static transform immediately.
+        overrides = {p.name: p.value for p in params}
+        self.publish(overrides)
+        self.log_command(overrides)
         return SetParametersResult(successful=True)
 
 
 def main():
     rclpy.init()
     node = RadarTfTuner()
+    node.log_command({})
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
