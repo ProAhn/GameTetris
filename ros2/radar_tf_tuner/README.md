@@ -77,6 +77,31 @@ ros2 run tf2_ros tf2_echo os_sensor ti_radar          # 두 프레임 사이 변
    ros2 param dump /radar_tf_tuner > radar_tf.yaml
    ```
 
+## x, y, z, roll, pitch, yaw 의 의미
+
+![ROS 좌표계와 os_sensor → ti_radar 변환](docs/ros_xyz_rpy.png)
+
+ROS는 오른손 좌표계(REP-103)를 씁니다. 모든 값은 `parent_frame`(os_sensor, 라이다)
+기준으로 `child_frame`(ti_radar, 레이더)가 어디에 어떻게 놓여 있는지를 나타냅니다.
+
+| 값 | 의미 | + 방향 | 단위 |
+|---|---|---|---|
+| x | 라이다에서 레이더까지 앞뒤 거리 | 앞 | m |
+| y | 좌우 거리 | 왼쪽 | m |
+| z | 위아래 거리 | 위 | m |
+| roll | x축(앞 방향)을 축으로 회전 | 왼쪽이 올라감 | rad |
+| pitch | y축(왼쪽 방향)을 축으로 회전 | 앞이 내려감 | rad |
+| yaw | z축(위 방향)을 축으로 회전 | 위에서 봤을 때 반시계 (왼쪽으로 돌기) | rad |
+
+- 레이더가 라이다 오른쪽에 있으면 y는 음수, 아래에 있으면 z는 음수입니다.
+- 각도는 라디안입니다. 5° ≈ 0.087 rad, 10° ≈ 0.175 rad, 1 rad ≈ 57.3°.
+
+슬라이더로 조정할 때 증상별로 만질 값:
+
+- 레이더 포인트가 통째로 앞뒤로 밀리면 x, 좌우로 밀리면 y, 위아래로 뜨면 z.
+- 가까운 포인트는 맞는데 먼 포인트가 좌우로 벌어지면 yaw. 거리에 비례해 어긋나는 것이 회전 오차의 특징입니다.
+- 먼 포인트가 위아래로 벌어지면 pitch, 좌우 끝이 서로 반대로 위아래로 틀어지면 roll.
+
 ## 문제 해결
 
 **노드를 띄웠는데 RViz의 RadarPoints가 여전히 Error일 때**
